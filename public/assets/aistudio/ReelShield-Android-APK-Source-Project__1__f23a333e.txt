@@ -1,0 +1,395 @@
+// ============================================================================
+// FILE: app/src/main/java/com/reelshield/blocker/ReelShieldLockManager.kt
+// DESCRIPTION: युजरचा स्वतःचा पासवर्ड, गुप्त Inbuilt Master Override (जो फक्त बॅकएंड कोडमध्ये असतो आणि स्क्रीनवर कुठेही दिसत नाही), आणि Change Password लॉजिक.
+// ============================================================================
+
+package com.reelshield.blocker
+
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import java.security.MessageDigest
+
+/**
+ * ReelShieldLockManager
+ * - User sets their own password to lock/unlock the APK.
+ * - Once set, the password is stored as a SHA-256 hash and never displayed on screen.
+ * - Includes an inbuilt private Admin Override Hash so if the user forgets their password,
+ *   entering the Admin Override Password in the same "Enter Password" field unlocks the APK
+ *   or allows changing the user's password.
+ */
+class ReelShieldLockManager(private val context: Context) {
+
+    companion object {
+        // Private Inbuilt Admin Override (Never shown in any UI or Toast)
+        private const val INBUILT_ADMIN_OVERRIDE_KEY = "Akshay@1181"
+    }
+
+    private val prefs = context.getSharedPreferences("reel_shield_prefs", Context.MODE_PRIVATE)
+
+    fun setUserPasswordAndActivateLock(
+        userPassword: String,
+        durationSeconds: Long = 3600L,
+        selectedPackages: Set<String>
+    ) {
+        val isTimerRemoved = durationSeconds <= 0L
+        val endTimestamp = if (isTimerRemoved) -1L else System.currentTimeMillis() + (durationSeconds * 1000L)
+
+        prefs.edit()
+            .putBoolean("shield_active", true)
+            .putBoolean("is_password_configured", true)
+            .putBoolean("timer_removed_mode", isTimerRemoved)
+            .putString("user_password_hash", sha256(userPassword.trim()))
+            .putLong("lock_end_timestamp", endTimestamp)
+            .putStringSet("selected_packages", selectedPackages)
+            .apply()
+    }
+
+    /**
+     * Single check for the "Enter Password" field:
+     * Accepts EITHER the User's set password OR the private Inbuilt Admin Override password.
+     */
+    fun isPasswordAccepted(enteredInput: String): Boolean {
+        val clean = enteredInput.trim()
+        if (clean.isEmpty()) return false
+
+        // 1. Check Private Inbuilt Admin Override Key
+        if (clean == INBUILT_ADMIN_OVERRIDE_KEY) return true
+
+        // 2. Check User's Set Password Hash
+        val savedUserHash = prefs.getString("user_password_hash", "") ?: ""
+        return savedUserHash.isNotEmpty() && sha256(clean) == savedUserHash
+    }
+
+    /**
+     * Change User Password using a single "Enter Password" verification field
+     * (Accepts current User Password OR Private Inbuilt Admin Override Key).
+     */
+    fun changeUserPassword(enteredCurrentOrAdminPassword: String, newUserPassword: String): Boolean {
+        if (!isPasswordAccepted(enteredCurrentOrAdminPassword)) {
+            return false
+        }
+        val cleanNew = newUserPassword.trim()
+        if (cleanNew.length < 4) return false
+
+        prefs.edit()
+            .putString("user_password_hash", sha256(cleanNew))
+            .putBoolean("is_password_configured", true)
+            .apply()
+        return true
+    }
+
+    fun isProtectionCurrentlyLocked(): Boolean {
+        val active = prefs.getBoolean("shield_active", true)
+        if (!active) return false
+
+        val isTimerRemoved = prefs.getBoolean("timer_removed_mode", false)
+        if (isTimerRemoved) {
+            return true
+        }
+
+        val lockEnd = prefs.getLong("lock_end_timestamp", 0L)
+        return System.currentTimeMillis() < lockEnd
+    }
+
+    fun verifyPasswordAndUnlock(enteredPassword: String): Boolean {
+        if (isPasswordAccepted(enteredPassword) || !isProtectionCurrentlyLocked()) {
+            prefs.edit()
+                .putBoolean("shield_active", false)
+                .putBoolean("timer_removed_mode", false)
+                .putLong("lock_end_timestamp", 0L)
+                .apply()
+
+            // Release Device Admin so user can uninstall or turn off APK
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val adminComponent = ComponentName(context, ReelDeviceAdminReceiver::class.java)
+            if (dpm.isAdminActive(adminComponent)) {
+                dpm.removeActiveAdmin(adminComponent)
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun sha256(input: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+}
+
+
+// ============================================================================
+// FILE: app/src/main/java/com/reelshield/blocker/ReelBlockerAccessibilityService.kt
+// DESCRIPTION: फक्त Reels/Shorts Scroll ब्लॉक करणारी आणि Home Screen / Settings मधून Uninstall करण्याचा प्रयत्न रोखणारी सर्विस.
+// ============================================================================
+
+package com.reelshield.blocker
+
+import android.accessibilityservice.AccessibilityService
+import android.content.Context
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
+
+/**
+ * ReelBlockerAccessibilityService
+ * 1. Blocks ONLY Reel / Shorts / Spotlight vertical scrolling in selected APKs.
+ * 2. Blocks Uninstall & Force Stop from Home Screen Launchers, Package Installer, and Android Settings
+ *    until unlocked with the user's password (or inbuilt admin recovery key) or Timer expires.
+ */
+class ReelBlockerAccessibilityService : AccessibilityService() {
+
+    private val defaultBlockedPackages = setOf(
+        "com.instagram.android",
+        "com.google.android.youtube",
+        "com.snapchat.android"
+    )
+
+    private val reelContainerViewIds = listOf(
+        "com.instagram.android:id/clips_viewer_view_pager",
+        "com.instagram.android:id/reel_viewer_root",
+        "com.google.android.youtube:id/reel_recycler",
+        "com.google.android.youtube:id/reel_watch_fragment_root",
+        "com.snapchat.android:id/spotlight_view_pager",
+        "com.snapchat.android:id/spotlight_feed_container"
+    )
+
+    private val systemAndLauncherPackages = setOf(
+        "com.android.settings",
+        "com.google.android.packageinstaller",
+        "com.android.packageinstaller",
+        "com.miui.securitycenter",
+        "com.sec.android.app.launcher",
+        "com.google.android.apps.nexuslauncher",
+        "com.miui.home",
+        "com.android.launcher3",
+        "net.oneplus.launcher"
+    )
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        val lockManager = ReelShieldLockManager(this)
+
+        if (!lockManager.isProtectionCurrentlyLocked()) return
+
+        val packageName = event.packageName?.toString() ?: return
+
+        // 1. Anti-Uninstall & Anti-Disable Everywhere (Home Screen, App Info, Settings, Package Installer)
+        if (systemAndLauncherPackages.contains(packageName) || packageName.contains("launcher")) {
+            val rootNode = rootInActiveWindow ?: return
+            if (containsTamperOrHomeUninstallAttempt(rootNode)) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                performGlobalAction(GLOBAL_ACTION_HOME)
+                Toast.makeText(
+                    this,
+                    "ReelShield लॉक सुरू आहे! पासवर्ड टाकल्याशिवाय Home Screen किंवा Settings मधून Uninstall/Off करता येणार नाही.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+        }
+
+        // 2. Check if current app is selected in APK Blocklist
+        val prefs = getSharedPreferences("reel_shield_prefs", Context.MODE_PRIVATE)
+        val activePackages = prefs.getStringSet("selected_packages", defaultBlockedPackages) ?: defaultBlockedPackages
+        if (!activePackages.contains(packageName)) return
+
+        // 3. Inspect UI Node Tree ONLY for Reel / Shorts / Spotlight Scroll Containers
+        val rootNode = rootInActiveWindow ?: return
+        if (isReelScrollDetected(rootNode, event)) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            Toast.makeText(
+                this,
+                "Reel/Shorts Scroll ब्लॉक केले आहे! बाकी ॲप (Chat/Search/Calls) तुम्ही वापरू शकता.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun isReelScrollDetected(root: AccessibilityNodeInfo, event: AccessibilityEvent): Boolean {
+        for (viewId in reelContainerViewIds) {
+            val matches = root.findAccessibilityNodeInfosByViewId(viewId)
+            if (!matches.isNullOrEmpty()) {
+                return true
+            }
+        }
+
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            val reelsTabSelected = root.findAccessibilityNodeInfosByText("Reels")
+                .any { it.isSelected && it.isVisibleToUser }
+            val shortsTabSelected = root.findAccessibilityNodeInfosByText("Shorts")
+                .any { it.isSelected && it.isVisibleToUser }
+            if (reelsTabSelected || shortsTabSelected) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun containsTamperOrHomeUninstallAttempt(root: AccessibilityNodeInfo): Boolean {
+        val appMentioned = root.findAccessibilityNodeInfosByText("ReelShield").isNotEmpty()
+        if (!appMentioned) return false
+
+        val dangerKeywords = listOf(
+            "Uninstall", "Force stop", "Device admin", "Deactivate",
+            "Delete", "Remove", "Clear storage", "Clear data", "अनिंस्टॉल"
+        )
+        return dangerKeywords.any { word ->
+            root.findAccessibilityNodeInfosByText(word).isNotEmpty()
+        }
+    }
+
+    override fun onInterrupt() {}
+}
+
+
+// ============================================================================
+// FILE: app/src/main/java/com/reelshield/blocker/PostInstallPermissionWizard.kt
+// DESCRIPTION: APK इन्स्टॉल केल्यानंतर लगेच Device Admin, Accessibility, Overlay आणि Battery परवानग्या स्वतः मागणारा ऑटो-सेटअप विझार्ड.
+// ============================================================================
+
+package com.reelshield.blocker
+
+import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+
+/**
+ * PostInstallPermissionWizard
+ * Automatically requests all required permissions right after APK installation:
+ * 1. Device Administrator (Blocks Home Screen & Play Store Uninstall)
+ * 2. Accessibility Service (Blocks Reel Scroll & Settings Force Stop)
+ * 3. System Alert Overlay (Shows Enter Password Prompt over Settings)
+ * 4. Ignore Battery Optimization (Prevents background kill)
+ */
+class PostInstallPermissionWizard(private val activity: Activity) {
+
+    fun requestAllRequiredPermissionsSequentially() {
+        val dpm = activity.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val adminComponent = ComponentName(activity, ReelDeviceAdminReceiver::class.java)
+        if (!dpm.isAdminActive(adminComponent)) {
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+                putExtra(
+                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    "ReelShield ला Home Screen वरून किंवा Settings मधून कोणीही डिलीट (Uninstall) करू नये म्हणून ही Admin परवानगी आवश्यक आहे."
+                )
+            }
+            activity.startActivityForResult(intent, 1001)
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(activity)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${activity.packageName}")
+            )
+            activity.startActivityForResult(intent, 1002)
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = activity.getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(activity.packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:${activity.packageName}")
+                }
+                activity.startActivityForResult(intent, 1003)
+                return
+            }
+        }
+
+        if (!isAccessibilityServiceEnabled()) {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            activity.startActivity(intent)
+        }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedComponentName = ComponentName(activity, ReelBlockerAccessibilityService::class.java)
+        val enabledServicesSetting = Settings.Secure.getString(
+            activity.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServicesSetting.contains(expectedComponentName.flattenToString())
+    }
+}
+
+
+// ============================================================================
+// FILE: app/src/main/java/com/reelshield/blocker/ReelDeviceAdminReceiver.kt
+// DESCRIPTION: Home Screen वरून किंवा कुठूनही APK थेट डिलीट/Uninstall करण्यास १००% मज्जाव करणारे Device Admin मॉड्यूल.
+// ============================================================================
+
+package com.reelshield.blocker
+
+import android.app.admin.DeviceAdminReceiver
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+
+/**
+ * ReelDeviceAdminReceiver
+ * Blocks APK uninstallation at OS level from Home Screen drag-to-uninstall,
+ * App Drawer, ADB, and Settings while protection is locked.
+ */
+class ReelDeviceAdminReceiver : DeviceAdminReceiver() {
+
+    override fun onDisableRequested(context: Context, intent: Intent): CharSequence {
+        return "चेतावणी: ReelShield लॉक सुरू आहे! पासवर्ड टाकल्याशिवाय हे APK कुठूनही बंद किंवा Uninstall करता येणार नाही."
+    }
+
+    override fun onEnabled(context: Context, intent: Intent) {
+        Toast.makeText(
+            context,
+            "Device Admin सक्रिय! आता Home Screen किंवा कुठूनही APK Uninstall होऊ शकत नाही.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+}
+
+
+// ============================================================================
+// FILE: .github/workflows/build-apk-cloud.yml
+// DESCRIPTION: कम्प्युटर किंवा Android Studio नसताना सुद्धा थेट मोबाईलवरून GitHub Actions द्वारे रेडीमेड .APK फाईल तयार करणारी Cloud Build स्क्रिप्ट.
+// ============================================================================
+
+name: Build Ready-to-Install Android APK (Cloud Builder)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 for Android Compilation
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK & Gradle
+        uses: android-actions/setup-android@v3
+
+      - name: Build Debug APK without needing a PC
+        run: |
+          chmod +x gradlew || true
+          gradle assembleDebug
+
+      - name: Upload Ready-to-Install ReelShield.apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReelShield-Ready-To-Install-APK
+          path: app/build/outputs/apk/debug/*.apk

@@ -1,0 +1,6 @@
+{
+  "name": "ReelShield - Android Blocker & APK Studio",
+  "description": "Complete ReelShield Android APK builder, automated test suite, live OS phone simulator, and downloadable source project with anti-uninstall defense and Reels/Shorts blocking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
