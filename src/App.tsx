@@ -76,14 +76,15 @@ export default function App() {
               <span className="font-mono font-bold text-amber-300">{INBUILT_ADMIN_OVERRIDE_KEY}</span>
             </div>
 
-            <button
-              onClick={() => setActiveTab('build')}
-              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-md transition-all active:scale-95"
+            <a
+              href="/ReelShield.apk"
+              download="ReelShield-production-signed.apk"
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-md transition-all active:scale-95"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">APK डाऊनलोड करा</span>
+              <Download className="w-3.5 h-3.5 text-slate-950 font-bold" />
+              <span className="hidden sm:inline">Signed APK डाऊनलोड</span>
               <span className="sm:hidden">APK</span>
-            </button>
+            </a>
           </div>
         </div>
 

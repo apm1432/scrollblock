@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ReelShield</string>
+    <string name="accessibility_desc">ReelShield ला रील्स आणि शॉर्ट्स स्क्रोल ब्लॉक करण्यासाठी ऍक्सेसिबिलिटी परवानगी आवश्यक आहे.</string>
+</resources>

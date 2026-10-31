@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0f172a"
+    android:padding="20dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="ReelShield"
+        android:textColor="#ffffff"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginTop="20dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Instagram Reels &amp; YouTube Shorts Blocker"
+        android:textColor="#94a3b8"
+        android:textSize="12sp"
+        android:layout_marginBottom="24dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#1e293b"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tvShieldStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="सद्यस्थिती: निष्क्रिय (UNLOCKED)"
+            android:textColor="#10b981"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvTimerRemaining"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="लॉक सुरू नाही"
+            android:textColor="#cbd5e1"
+            android:textSize="14sp"
+            android:layout_marginTop="8dp" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnToggleShield"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="ReelShield सुरू करा (Activate Lock)"
+        android:background="#10b981"
+        android:textColor="#ffffff"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btnChangePassword"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="पासवर्ड बदला (Change Password)"
+        android:background="#334155"
+        android:textColor="#ffffff"
+        android:textSize="13sp"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btnCheckPermissions"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="परवानग्या तपासा (Permission Wizard)"
+        android:background="#334155"
+        android:textColor="#ffffff"
+        android:textSize="13sp" />
+
+</LinearLayout>

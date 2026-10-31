@@ -735,13 +735,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK & Gradle
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build Debug APK without needing a PC
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build Ready-to-Install Android APK
         run: |
-          chmod +x gradlew || true
-          ./gradlew assembleDebug --no-daemon
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
 
       - name: Upload Ready-to-Install ReelShield.apk
         uses: actions/upload-artifact@v4

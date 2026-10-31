@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="shield_bg">#0f172a</color>
+    <color name="shield_card">#1e293b</color>
+</resources>
